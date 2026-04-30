@@ -89,7 +89,7 @@ my-spark-operator-controller-6bdc5dc844-ppq4t   1/1     Running   0          4m9
 my-spark-operator-webhook-7c5bdff685-gsdzl      1/1     Running   0          4m9s
 ```
 
-Создаем файл spark-pi.yaml
+Создаем файл spark-kubectl/spark-pi.yaml
 ```yaml
 apiVersion: "sparkoperator.k8s.io/v1beta2"
 kind: SparkApplication
@@ -122,7 +122,7 @@ spec:
 ```
 Запускаем 
 ```shell
-kubectl apply -f spark-pi.yaml
+kubectl apply -f spark-kubectl/spark-pi.yaml
 ```
 
 Тут опять можно немного подождать. Во-первых, может не быть локального образа. Скачивание займет некоторое время при первой попытке
@@ -184,6 +184,150 @@ TOKEN=$(kubectl create token spark)
 curl -k -X POST "$APISERVER/apis/sparkoperator.k8s.io/v1beta2/namespaces/default/sparkapplications" \
      -H "Authorization: Bearer $TOKEN" \
      -H "Content-Type: application/json" \
-     -d @spark-pi.json
+     -d @spark-rest-api/spark-pi.json
+```
+
+# Airflow
+Генерация ключа для добавления в [override-values.yaml](airflow/override-values.yaml)
+```shell
+python3 -c 'import secrets; print(secrets.token_hex(16))'
+
+```
+```
+f4765c0e9d5fcd06614d5646e4c2191d
+```
+Добавляем репо
+```shell
+helm repo add apache-airflow https://airflow.apache.org
+helm repo update
+```
+
+```
+Hang tight while we grab the latest from your chart repositories...
+...Successfully got an update from the "spark-operator" chart repository
+...Successfully got an update from the "apache-airflow" chart repository
+
+```
+ Устанавливаем Airflow в отдельный namespace
+```shell
+helm upgrade --install airflow apache-airflow/airflow \
+--namespace airflow \
+--create-namespace
+```
+Выполнение займет какое-то время
+```
+Release "airflow" does not exist. Installing it now.
+NAME: airflow
+LAST DEPLOYED: Wed Apr 29 13:54:41 2026
+NAMESPACE: airflow
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+Thank you for installing Apache Airflow 3.2.0!
+.....
+```
+
+Доступ к интерфейсу
+По умолчанию веб-интерфейс не виден снаружи. Пробросьте порт на свою локальную машину:
+```bash
+kubectl port-forward svc/airflow-api-server 8080:8080 -n airflow
+
+```
+Теперь Airflow доступен по адресу `http://localhost:8080`. Логин/пароль по умолчанию: **admin / admin**.
+
+Пока команда запущена в терминале это будет работать. Если закрыть терминал, то проброс перестанет работать.
+Альтернативно можно использовать url на все время работы подов airflow. Вот такую комбинацию
+
+```bash
+kubectl patch svc airflow-api-server -n airflow -p '{"spec": {"type": "NodePort"}}'
+
+```
+```
+service/airflow-api-server patched
+```
+Чтобы получить адрес
+```bash
+minikube service airflow-api-server -n airflow --url
+```
+```
+http://192.168.49.2:32146
+```
+
+>Полученная ссылка будет доступна до перезагрузки пода
+Для продуктового решения нужно использовать SERVICE
+
+
+RBAC [airflow-spark-role.yaml](airflow/airflow-spark-role.yaml)
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: default
+  name: airflow-spark-manager
+rules:
+  - apiGroups: ["sparkoperator.k8s.io"]
+    resources: ["sparkapplications"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: airflow-spark-manager-binding
+  namespace: default
+subjects:
+  - kind: ServiceAccount
+    name: airflow-worker  # имя SA, под которым работает воркер Airflow
+    namespace: airflow
+roleRef:
+  kind: Role
+  name: airflow-spark-manager
+  apiGroup: rbac.authorization.k8s.io
+
+```
+
+```shell
+ kubectl apply -f airflow/airflow-spark-role.yaml
+
+```
+```
+role.rbac.authorization.k8s.io/airflow-spark-manager created
+rolebinding.rbac.authorization.k8s.io/airflow-spark-manager-binding created
+```
+Настройка Airflow Connection
+В интерфейсе Airflow (Admin -> Connections) нужно отредактировать соединение kubernetes_default:
+Conn Type: Kubernetes Cluster Connection
+In Cluster Config: Поставьте галочку (так как Airflow уже внутри кластера).
+Namespace: default (где будут запускаться Spark-задачи).
+
+Добавление apache-airflow-providers-cncf-kubernetes
+```shell
+helm upgrade airflow apache-airflow/airflow -n airflow --reuse-values --set "extraPipPackages={apache-airflow-providers-cncf-kubernetes}"
+```
+
+Монтирование каталога для файлов даг в minikube
+```shell
+minikube mount  $(pwd)/airflow/dags:/data/dags
+```
+```
+📁  Mounting host path /home/dm/airflow/dags into VM as /data/dags ...
+    ▪ Mount type:   9p
+    ▪ User ID:      docker
+    ▪ Group ID:     docker
+    ▪ Version:      9p2000.L
+    ▪ Message Size: 262144
+    ▪ Options:      map[]
+    ▪ Bind Address: 192.168.49.1:45123
+🚀  Userspace file server: ufs starting
+✅  Successfully mounted /home/dm/projects/spark-minikube/airflow/dags to /data/dags
+
+📌  NOTE: This process must stay alive for the mount to be accessible ...
+
+```
+[override-values.yaml](airflow/override-values.yaml) будет содержать необходимые изменения для стандартного values.yaml
+```shell
+helm upgrade airflow apache-airflow/airflow \
+  -n airflow \
+  -f airflow/override-values.yaml 
 ```
 

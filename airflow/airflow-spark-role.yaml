@@ -1,0 +1,26 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: default
+  name: airflow-spark-manager
+rules:
+  - apiGroups: ["sparkoperator.k8s.io"]
+    resources: ["sparkapplications", "sparkapplications/status"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: airflow-spark-manager-binding
+  namespace: default
+subjects:
+  - kind: ServiceAccount
+    name: airflow-worker  # имя SA, под которым работает воркер Airflow
+    namespace: airflow
+roleRef:
+  kind: Role
+  name: airflow-spark-manager
+  apiGroup: rbac.authorization.k8s.io

@@ -1,0 +1,45 @@
+extraPipPackages:
+  - "apache-airflow-providers-cncf-kubernetes"
+
+apiSecretKey: "f4765c0e9d5fcd06614d5646e4c2191d"
+webserver:
+  extraVolumes:
+    - name: dags-data
+      hostPath:
+        path: /data/dags
+  extraVolumeMounts:
+    - name: dags-data
+      mountPath: /opt/airflow/dags
+
+scheduler:
+  extraVolumes:
+    - name: dags-data
+      hostPath:
+        path: /data/dags
+  extraVolumeMounts:
+    - name: dags-data
+      mountPath: /opt/airflow/dags
+
+workers:
+  celery: # Все настройки томов для воркеров теперь строго здесь
+    extraVolumes:
+      - name: dags-data
+        hostPath:
+          path: /data/dags
+    extraVolumeMounts:
+      - name: dags-data
+        mountPath: /opt/airflow/dags
+
+dags:
+  gitSync:
+    enabled: false
+    recommendedProbeSetting: true # Убирает предупреждение
+
+dagProcessor:
+  extraVolumes:
+    - name: dags-data
+      hostPath:
+        path: /data/dags
+  extraVolumeMounts:
+    - name: dags-data
+      mountPath: /opt/airflow/dags
